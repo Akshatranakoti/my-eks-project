@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+
   pull_request:
     branches:
       - main
@@ -14,6 +15,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: my-eks-devops-app
+  EKS_CLUSTER_NAME: demo-eks-cluster
 
 jobs:
   test-and-build:
@@ -38,16 +40,6 @@ jobs:
       - name: Run tests
         run: pytest
 
-      - name: Show GitHub OIDC claims
-        run: |
-          echo "Repository: ${{ github.repository }}"
-          echo "Repository ID: ${{ github.event.repository.id }}"
-          echo "Owner ID: ${{ github.event.repository.owner.id }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Event: ${{ github.event_name }}"
-          echo "Workflow: ${{ github.workflow }}"
-          echo "Actor: ${{ github.actor }}"
-
       - name: Configure AWS credentials
         if: github.event_name == 'push'
         uses: aws-actions/configure-aws-credentials@v5
@@ -60,14 +52,40 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Set image tag
+        if: github.event_name == 'push'
+        run: |
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
+
       - name: Build Docker image
         if: github.event_name == 'push'
         run: |
           docker build \
-            -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest .
+            -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG} .
 
       - name: Push Docker image
         if: github.event_name == 'push'
         run: |
           docker push \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}
+
+      - name: Configure kubectl for EKS
+        if: github.event_name == 'push'
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Deploy to EKS
+        if: github.event_name == 'push'
+        run: |
+          kubectl set image deployment/myapp \
+            myapp=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG} \
+            -n myapp
+
+      - name: Wait for rollout
+        if: github.event_name == 'push'
+        run: |
+          kubectl rollout status deployment/myapp \
+            -n myapp \
+            --timeout=180s
