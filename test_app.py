@@ -7,7 +7,7 @@ def test_home():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert response.data == b"Hello from my EKS DevOps project!"
+    assert response.data == b"Hello from my EKS DevOps project and Akshat!"
 
 
 def test_health():
